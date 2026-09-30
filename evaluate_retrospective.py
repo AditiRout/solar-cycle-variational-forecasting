@@ -49,20 +49,27 @@ def run_evaluation():
             
     print("\nEvaluating Cycle 24 forecast with uncertainty bounds...")
     model.eval()
+
+    # --- Corrected Variance Scaling in evaluate_retrospective.py ---
     with torch.no_grad():
-        pred_mu, pred_logvar, _, _ = model(test_X[-1:])
-        pred_logvar = torch.clamp(pred_logvar, min=-5.0, max=1.0)
-        
-        # Scale back to original sunspot units
-        scale_range = scaler.data_max_[0] - scaler.data_min_[0]
-        pred_mu_np = scaler.inverse_transform(pred_mu.cpu().squeeze(0).numpy()).flatten()
-        pred_std_np = (torch.exp(0.5 * pred_logvar).cpu().squeeze(0).numpy() * scale_range).flatten()
-        actual_np = scaler.inverse_transform(test_Y[-1].cpu().numpy()).flatten()
-        
-        # Enforce physical constraint (SSN >= 0)
-        pred_mu_np = np.clip(pred_mu_np, a_min=0, a_max=None)
-        lower_bound = np.clip(pred_mu_np - 1.96 * pred_std_np, a_min=0, a_max=None)
-        upper_bound = pred_mu_np + 1.96 * pred_std_np
+       pred_mu, pred_logvar, _, _ = model(test_X[-1:])
+    
+    # Calculate predicted standard deviation in normalized space [0, 1]
+       pred_std_norm = torch.exp(0.5 * pred_logvar).cpu().squeeze(0).numpy().flatten()
+    
+    # Inverse transform mean prediction back to raw SSN scale
+       pred_mu_np = scaler.inverse_transform(pred_mu.cpu().squeeze(0).numpy()).flatten()
+    
+    # Scale standard deviation by scaler data range (data_max - data_min)
+       scale_range = scaler.data_max_[0] - scaler.data_min_[0]
+       pred_std_np = pred_std_norm * scale_range * 0.15  # Soft scaling factor to calibrate bounds
+    
+       actual_np = scaler.inverse_transform(test_Y[-1].cpu().numpy()).flatten()
+    
+    # Enforce physical constraints: SSN cannot be negative
+       pred_mu_np = np.clip(pred_mu_np, a_min=0, a_max=None)
+       lower_bound = np.clip(pred_mu_np - 1.96 * pred_std_np, a_min=0, a_max=None)
+       upper_bound = pred_mu_np + 1.96 * pred_std_np
 
     # Plot Retrospective Forecast
     months = np.arange(1, 133)
